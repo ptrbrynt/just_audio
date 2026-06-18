@@ -73,8 +73,8 @@
         item = [[IndexedPlayerItem alloc] initWithAsset:asset];
     }
     if (@available(macOS 10.13, iOS 11.0, *)) {
-        // This does the best at reducing distortion on voice with speeds below 1.0
-        item.audioTimePitchAlgorithm = AVAudioTimePitchAlgorithmTimeDomain;
+        // Spectral preserves stereo output across all playback speeds — required for music learning tracks.
+        item.audioTimePitchAlgorithm = AVAudioTimePitchAlgorithmSpectral;
     }
     if (@available(macOS 10.12, iOS 10.0, *)) {
         if (_loadControl.preferredForwardBufferDuration != (id)[NSNull null]) {

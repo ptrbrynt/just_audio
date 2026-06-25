@@ -90,6 +90,12 @@ class MethodChannelAudioPlayer extends AudioPlayerPlatform {
   }
 
   @override
+  Future<SetPanResponse> setPan(SetPanRequest request) async {
+    return SetPanResponse.fromMap((await _channel
+        .invokeMethod<Map<dynamic, dynamic>>('setPan', request.toMap()))!);
+  }
+
+  @override
   Future<SetSkipSilenceResponse> setSkipSilence(
       SetSkipSilenceRequest request) async {
     return SetSkipSilenceResponse.fromMap(

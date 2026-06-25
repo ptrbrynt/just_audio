@@ -146,6 +146,7 @@ class AudioPlayer {
   final _volumeSubject = BehaviorSubject.seeded(1.0);
   final _speedSubject = BehaviorSubject.seeded(1.0);
   final _pitchSubject = BehaviorSubject.seeded(1.0);
+  final _panSubject = BehaviorSubject.seeded(0.0);
   final _skipSilenceEnabledSubject = BehaviorSubject.seeded(false);
 
   final _positionDiscontinuitySubject =
@@ -509,6 +510,12 @@ class AudioPlayer {
 
   /// A stream of current pitch factor values.
   Stream<double> get pitchStream => _pitchSubject.stream;
+
+  /// The current stereo pan of the player. -1.0 = full left, 0.0 = centre, 1.0 = full right.
+  double get pan => _panSubject.nvalue!;
+
+  /// A stream of stereo pan values.
+  Stream<double> get panStream => _panSubject.stream;
 
   /// The current skipSilenceEnabled factor of the player.
   bool get skipSilenceEnabled => _skipSilenceEnabledSubject.nvalue!;
@@ -1181,6 +1188,13 @@ class AudioPlayer {
     await (await _platform).setVolume(SetVolumeRequest(volume: volume));
   }
 
+  /// Sets the stereo pan of this player. -1.0 = full left, 0.0 = centre, 1.0 = full right.
+  Future<void> setPan(final double pan) async {
+    if (_disposed) return;
+    _panSubject.add(pan);
+    await (await _platform).setPan(SetPanRequest(pan: pan));
+  }
+
   /// Sets whether silence should be skipped in audio playback. (Currently
   /// Android only).
   Future<void> setSkipSilenceEnabled(bool enabled) async {
@@ -1444,6 +1458,7 @@ class AudioPlayer {
       await _volumeSubject.close();
       await _speedSubject.close();
       await _pitchSubject.close();
+      await _panSubject.close();
 
       await _durationSubject.close();
       await _processingStateSubject.close();
@@ -1537,6 +1552,9 @@ class AudioPlayer {
         }
         if (message.pitch != null) {
           _pitchSubject.add(message.pitch!);
+        }
+        if (message.pan != null) {
+          _panSubject.add(message.pan!);
         }
         if (message.loopMode != null) {
           _sequenceStateSubject.add(sequenceState.copyWith(

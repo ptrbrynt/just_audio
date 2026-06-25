@@ -8,8 +8,56 @@
 #import "./include/just_audio/LoopingAudioSource.h"
 #import "./include/just_audio/ClippingAudioSource.h"
 #import <AVFoundation/AVFoundation.h>
+#import <MediaToolbox/MediaToolbox.h>
 #import <stdlib.h>
 #include <TargetConditionals.h>
+
+// Context for the stereo pan MTAudioProcessingTap.
+typedef struct {
+    float pan;
+} PanTapContext;
+
+static void panTapInit(MTAudioProcessingTapRef tap, void *clientInfo, void **tapStorageOut) {
+    // clientInfo is a heap-allocated PanTapContext — transfer ownership to tapStorage.
+    *tapStorageOut = clientInfo;
+}
+
+static void panTapFinalize(MTAudioProcessingTapRef tap) {
+    free(MTAudioProcessingTapGetStorage(tap));
+}
+
+static void panTapProcess(MTAudioProcessingTapRef tap,
+                          CMItemCount numberFrames,
+                          MTAudioProcessingTapFlags flags,
+                          AudioBufferList *bufferListInOut,
+                          CMItemCount *numberFramesOut,
+                          MTAudioProcessingTapFlags *flagsOut) {
+    MTAudioProcessingTapGetSourceAudio(tap, numberFrames, bufferListInOut, flagsOut, NULL, numberFramesOut);
+
+    PanTapContext *ctx = (PanTapContext *)MTAudioProcessingTapGetStorage(tap);
+    float leftGain  = fminf(1.0f, 1.0f - ctx->pan);
+    float rightGain = fminf(1.0f, 1.0f + ctx->pan);
+
+    for (UInt32 i = 0; i < bufferListInOut->mNumberBuffers; i++) {
+        AudioBuffer *buf = &bufferListInOut->mBuffers[i];
+        float *samples = (float *)buf->mData;
+        if (buf->mNumberChannels == 2) {
+            // Interleaved stereo: LRLRLR…
+            UInt32 frameCount = buf->mDataByteSize / (sizeof(float) * 2);
+            for (UInt32 f = 0; f < frameCount; f++) {
+                samples[f * 2]     *= leftGain;
+                samples[f * 2 + 1] *= rightGain;
+            }
+        } else if (buf->mNumberChannels == 1) {
+            // Non-interleaved: buffer 0 = L, buffer 1 = R
+            float gain = (i == 0) ? leftGain : rightGain;
+            UInt32 sampleCount = buf->mDataByteSize / sizeof(float);
+            for (UInt32 s = 0; s < sampleCount; s++) {
+                samples[s] *= gain;
+            }
+        }
+    }
+}
 
 #define TREADMILL_SIZE 2
 #define ERROR_ABORT 10000000
@@ -48,6 +96,7 @@
     BOOL _playing;
     float _speed;
     float _volume;
+    float _pan;
     BOOL _justAdvanced;
     BOOL _enqueuedAll;
     NSDictionary<NSString *, NSObject *> *_icyMetadata;
@@ -110,6 +159,7 @@
     }
     _speed = 1.0f;
     _volume = 1.0f;
+    _pan = 0.0f;
     _justAdvanced = NO;
     _enqueuedAll = NO;
     _icyMetadata = @{};
@@ -136,6 +186,9 @@
             result(@{});
         } else if ([@"setVolume" isEqualToString:call.method]) {
             [self setVolume:(float)[request[@"volume"] doubleValue]];
+            result(@{});
+        } else if ([@"setPan" isEqualToString:call.method]) {
+            [self setPan:(float)[request[@"pan"] doubleValue]];
             result(@{});
         } else if ([@"setSkipSilence" isEqualToString:call.method]) {
             /// TODO on iOS side; Seems more involved, so someone with ObjectiveC experience might look at it.
@@ -708,6 +761,9 @@
         _player.rate = _speed;
     }
     [_player setVolume:_volume];
+    if (_player.currentItem) {
+        [self applyAudioMixToItem:_player.currentItem];
+    }
     [self broadcastPlaybackEvent];
 
     if (_loadResult && (_indexedAudioSources.count == 0 || !_player.currentItem ||
@@ -922,6 +978,7 @@
                 [self broadcastPlaybackEvent];
             }
         }
+        [self applyAudioMixToItem:playerItem];
         //NSLog(@"currentItem changed. _index=%d", _index);
         _bufferUnconfirmed = YES;
         // If we've skipped or transitioned to a new item and we're not
@@ -1085,6 +1142,60 @@
     _volume = volume;
     if (_player) {
         [_player setVolume:volume];
+    }
+}
+
+- (void)setPan:(float)pan {
+    _pan = fmaxf(-1.0f, fminf(1.0f, pan));
+    if (_player && _player.currentItem) {
+        [self applyAudioMixToItem:_player.currentItem];
+    }
+}
+
+- (void)applyAudioMixToItem:(AVPlayerItem *)item {
+    if (_pan == 0.0f) {
+        item.audioMix = nil;
+        return;
+    }
+
+    NSMutableArray<AVMutableAudioMixInputParameters *> *params = [NSMutableArray array];
+
+    for (AVPlayerItemTrack *track in item.tracks) {
+        AVAssetTrack *assetTrack = track.assetTrack;
+        if (assetTrack == nil) continue;
+        if (![assetTrack.mediaType isEqualToString:AVMediaTypeAudio]) continue;
+
+        PanTapContext *clientInfo = (PanTapContext *)malloc(sizeof(PanTapContext));
+        clientInfo->pan = _pan;
+
+        MTAudioProcessingTapCallbacks callbacks;
+        callbacks.version = kMTAudioProcessingTapCallbacksVersion_0;
+        callbacks.clientInfo = clientInfo;
+        callbacks.init = panTapInit;
+        callbacks.finalize = panTapFinalize;
+        callbacks.prepare = NULL;
+        callbacks.unprepare = NULL;
+        callbacks.process = panTapProcess;
+
+        MTAudioProcessingTapRef tap;
+        OSStatus status = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks,
+                                                      kMTAudioProcessingTapCreationFlag_PostEffects, &tap);
+        if (status != noErr) {
+            free(clientInfo);
+            continue;
+        }
+
+        AVMutableAudioMixInputParameters *inputParams =
+            [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:assetTrack];
+        inputParams.audioTapProcessor = tap;
+        CFRelease(tap);
+        [params addObject:inputParams];
+    }
+
+    if (params.count > 0) {
+        AVMutableAudioMix *audioMix = [AVMutableAudioMix audioMix];
+        audioMix.inputParameters = params;
+        item.audioMix = audioMix;
     }
 }
 

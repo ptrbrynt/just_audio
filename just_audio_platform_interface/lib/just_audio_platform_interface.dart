@@ -106,6 +106,11 @@ abstract class AudioPlayerPlatform {
     throw UnimplementedError("setPitch() has not been implemented.");
   }
 
+  /// Sets the stereo pan. -1.0 = full left, 0.0 = centre, 1.0 = full right.
+  Future<SetPanResponse> setPan(SetPanRequest request) {
+    throw UnimplementedError("setPan() has not been implemented.");
+  }
+
   /// Sets skipSilence to true/false.
   Future<SetSkipSilenceResponse> setSkipSilence(SetSkipSilenceRequest request) {
     throw UnimplementedError("setSkipSilence() has not been implemented.");
@@ -253,6 +258,7 @@ class PlayerDataMessage {
   final double? volume;
   final double? speed;
   final double? pitch;
+  final double? pan;
   final LoopModeMessage? loopMode;
   final ShuffleModeMessage? shuffleMode;
   // TODO: Eventually move other state here?
@@ -263,6 +269,7 @@ class PlayerDataMessage {
     this.volume,
     this.speed,
     this.pitch,
+    this.pan,
     this.loopMode,
     this.shuffleMode,
   });
@@ -273,6 +280,7 @@ class PlayerDataMessage {
         volume: map['volume'] as double?,
         speed: map['speed'] as double?,
         pitch: map['pitch'] as double?,
+        pan: map['pan'] as double?,
         loopMode: map['loopMode'] != null
             ? LoopModeMessage.values[map['loopMode'] as int]
             : null,
@@ -589,6 +597,23 @@ class SetPitchRequest {
 class SetPitchResponse {
   static SetPitchResponse fromMap(Map<dynamic, dynamic> map) =>
       SetPitchResponse();
+}
+
+/// Information communicated to the platform implementation when setting the
+/// stereo pan. -1.0 = full left, 0.0 = centre, 1.0 = full right.
+class SetPanRequest {
+  final double pan;
+
+  SetPanRequest({required this.pan});
+
+  Map<dynamic, dynamic> toMap() => <dynamic, dynamic>{
+        'pan': pan,
+      };
+}
+
+/// Information returned by the platform implementation after setting the pan.
+class SetPanResponse {
+  static SetPanResponse fromMap(Map<dynamic, dynamic> map) => SetPanResponse();
 }
 
 /// Information communicated to the platform implementation when setting the

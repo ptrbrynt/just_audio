@@ -120,6 +120,7 @@ class Html5AudioPlayer extends JustAudioPlayer {
   LoopModeMessage _loopMode = LoopModeMessage.off;
   bool _shuffleModeEnabled = false;
   final Map<String, AudioSourcePlayer> _audioSourcePlayers = {};
+  StereoPannerNode? _pannerNode;
 
   /// Creates an [Html5AudioPlayer] with the given [id].
   Html5AudioPlayer({required String id}) : super(id: id) {
@@ -327,6 +328,20 @@ class Html5AudioPlayer extends JustAudioPlayer {
   Future<SetVolumeResponse> setVolume(SetVolumeRequest request) async {
     _audioElement.volume = request.volume;
     return SetVolumeResponse();
+  }
+
+  @override
+  Future<SetPanResponse> setPan(SetPanRequest request) async {
+    if (_pannerNode == null) {
+      final ctx = AudioContext();
+      final source = ctx.createMediaElementSource(_audioElement);
+      final panner = StereoPannerNode(ctx);
+      source.connect(panner);
+      panner.connect(ctx.destination);
+      _pannerNode = panner;
+    }
+    _pannerNode!.pan.value = request.pan;
+    return SetPanResponse();
   }
 
   @override

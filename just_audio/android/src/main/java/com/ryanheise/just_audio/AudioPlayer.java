@@ -11,8 +11,11 @@ import android.os.Looper;
 import androidx.media3.common.C;
 import androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl;
 import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.common.audio.AudioProcessor;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlaybackException;
+import androidx.media3.exoplayer.audio.AudioSink;
+import androidx.media3.exoplayer.audio.DefaultAudioSink;
 import androidx.media3.exoplayer.LivePlaybackSpeedControl;
 import androidx.media3.exoplayer.LoadControl;
 import androidx.media3.common.MediaItem;
@@ -99,6 +102,7 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
     private AudioOffloadPreferences audioOffloadPreferences;
     private boolean useLazyPreparation;
     private LivePlaybackSpeedControl livePlaybackSpeedControl;
+    private final BalanceAudioProcessor balanceAudioProcessor = new BalanceAudioProcessor();
     private List<Object> rawAudioEffects;
     private List<AudioEffect> audioEffects = new ArrayList<AudioEffect>();
     private Map<String, AudioEffect> audioEffectsMap = new HashMap<String, AudioEffect>();
@@ -465,6 +469,10 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
                 setPitch((float) ((double) ((Double) call.argument("pitch"))));
                 result.success(new HashMap<String, Object>());
                 break;
+            case "setPan":
+                setPan((float) ((double) ((Double) call.argument("pan"))));
+                result.success(new HashMap<String, Object>());
+                break;
             case "setSkipSilence":
                 setSkipSilenceEnabled((Boolean) call.argument("enabled"));
                 result.success(new HashMap<String, Object>());
@@ -776,8 +784,9 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
 
     private void ensurePlayerInitialized() {
         if (player == null) {
+            BalanceRenderersFactory balanceRenderersFactory = new BalanceRenderersFactory(context);
             RenderersFactory renderersFactory = (eventHandler, videoListener, audioListener, textOutput, metadataOutput) -> {
-                Renderer[] defaultRenderers = new DefaultRenderersFactory(context)
+                Renderer[] defaultRenderers = balanceRenderersFactory
                     .createRenderers(eventHandler, videoListener, audioListener, textOutput, metadataOutput);
                 Renderer[] allRenderers = Arrays.copyOf(defaultRenderers, defaultRenderers.length + 1);
                 allRenderers[defaultRenderers.length] = new ObserverRenderer();
@@ -1000,6 +1009,10 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
         player.setVolume(volume);
     }
 
+    public void setPan(final float pan) {
+        balanceAudioProcessor.setPan(pan);
+    }
+
     public void setSpeed(final float speed) {
         PlaybackParameters params = player.getPlaybackParameters();
         if (params.speed == speed) return;
@@ -1122,6 +1135,22 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
         buffering,
         ready,
         completed
+    }
+
+    private class BalanceRenderersFactory extends DefaultRenderersFactory {
+        public BalanceRenderersFactory(Context context) {
+            super(context);
+        }
+
+        @Override
+        protected AudioSink buildAudioSink(
+                Context context, boolean enableFloatOutput, boolean enableAudioTrackPlaybackParams) {
+            return new DefaultAudioSink.Builder(context)
+                    .setAudioProcessors(new AudioProcessor[]{balanceAudioProcessor})
+                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .build();
+        }
     }
 
     public class ObserverRenderer extends NoSampleRenderer {

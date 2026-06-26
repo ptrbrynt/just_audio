@@ -855,6 +855,10 @@ static void panTapProcess(MTAudioProcessingTapRef tap,
         switch (status) {
             case AVPlayerItemStatusReadyToPlay: {
                 if (playerItem != _player.currentItem) return;
+                // Install pan tap now that tracks are guaranteed available.
+                if (!_panTapContext || playerItem.audioMix == nil) {
+                    [self applyAudioMixToItem:playerItem];
+                }
                 // Detect buffering in different ways depending on whether we're playing
                 if (_playing) {
                     if (@available(macOS 10.12, iOS 10.0, *)) {
@@ -1153,28 +1157,16 @@ static void panTapProcess(MTAudioProcessingTapRef tap,
     _pan = fmaxf(-1.0f, fminf(1.0f, pan));
     if (!_player || !_player.currentItem) return;
 
-    if (_pan == 0.0f) {
-        // Bypass: clear the mix. The tap context is kept alive for reuse.
-        _player.currentItem.audioMix = nil;
-        return;
-    }
-
     if (_panTapContext && _player.currentItem.audioMix != nil) {
-        // Tap already installed on this item — update pan value in-place.
+        // Tap already installed — update pan value in-place.
         // Float writes are atomic on ARM64; safe to update from the main thread.
         _panTapContext->pan = _pan;
     } else {
-        // No tap yet (or item changed) — install it now.
         [self applyAudioMixToItem:_player.currentItem];
     }
 }
 
 - (void)applyAudioMixToItem:(AVPlayerItem *)item {
-    if (_pan == 0.0f) {
-        item.audioMix = nil;
-        return;
-    }
-
     // Allocate the tap context once; reuse on subsequent calls.
     if (!_panTapContext) {
         _panTapContext = (PanTapContext *)malloc(sizeof(PanTapContext));

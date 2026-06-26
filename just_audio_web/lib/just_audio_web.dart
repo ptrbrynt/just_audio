@@ -121,6 +121,7 @@ class Html5AudioPlayer extends JustAudioPlayer {
   bool _shuffleModeEnabled = false;
   final Map<String, AudioSourcePlayer> _audioSourcePlayers = {};
   StereoPannerNode? _pannerNode;
+  AudioContext? _audioContext;
 
   /// Creates an [Html5AudioPlayer] with the given [id].
   Html5AudioPlayer({required String id}) : super(id: id) {
@@ -334,11 +335,13 @@ class Html5AudioPlayer extends JustAudioPlayer {
   Future<SetPanResponse> setPan(SetPanRequest request) async {
     if (_pannerNode == null) {
       final ctx = AudioContext();
+      _audioContext = ctx;
       final source = ctx.createMediaElementSource(_audioElement);
       final panner = StereoPannerNode(ctx);
       source.connect(panner);
       panner.connect(ctx.destination);
       _pannerNode = panner;
+      ctx.resume();
     }
     _pannerNode!.pan.value = request.pan;
     return SetPanResponse();

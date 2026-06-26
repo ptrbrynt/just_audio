@@ -18,12 +18,13 @@ typedef struct {
 } PanTapContext;
 
 static void panTapInit(MTAudioProcessingTapRef tap, void *clientInfo, void **tapStorageOut) {
-    // clientInfo is a heap-allocated PanTapContext — transfer ownership to tapStorage.
+    // clientInfo is the AudioPlayer-owned PanTapContext — do NOT transfer ownership.
     *tapStorageOut = clientInfo;
 }
 
 static void panTapFinalize(MTAudioProcessingTapRef tap) {
-    free(MTAudioProcessingTapGetStorage(tap));
+    // The PanTapContext is owned by AudioPlayer and freed in -dispose:.
+    // Do not free here to avoid use-after-free with the realtime audio thread.
 }
 
 static void panTapProcess(MTAudioProcessingTapRef tap,
@@ -40,6 +41,7 @@ static void panTapProcess(MTAudioProcessingTapRef tap,
 
     for (UInt32 i = 0; i < bufferListInOut->mNumberBuffers; i++) {
         AudioBuffer *buf = &bufferListInOut->mBuffers[i];
+        if (buf->mData == NULL) continue;
         float *samples = (float *)buf->mData;
         if (buf->mNumberChannels == 2) {
             // Interleaved stereo: LRLRLR…
@@ -97,6 +99,7 @@ static void panTapProcess(MTAudioProcessingTapRef tap,
     float _speed;
     float _volume;
     float _pan;
+    PanTapContext *_panTapContext;
     BOOL _justAdvanced;
     BOOL _enqueuedAll;
     NSDictionary<NSString *, NSObject *> *_icyMetadata;
@@ -160,6 +163,7 @@ static void panTapProcess(MTAudioProcessingTapRef tap,
     _speed = 1.0f;
     _volume = 1.0f;
     _pan = 0.0f;
+    _panTapContext = NULL;
     _justAdvanced = NO;
     _enqueuedAll = NO;
     _icyMetadata = @{};
@@ -1147,7 +1151,20 @@ static void panTapProcess(MTAudioProcessingTapRef tap,
 
 - (void)setPan:(float)pan {
     _pan = fmaxf(-1.0f, fminf(1.0f, pan));
-    if (_player && _player.currentItem) {
+    if (!_player || !_player.currentItem) return;
+
+    if (_pan == 0.0f) {
+        // Bypass: clear the mix. The tap context is kept alive for reuse.
+        _player.currentItem.audioMix = nil;
+        return;
+    }
+
+    if (_panTapContext && _player.currentItem.audioMix != nil) {
+        // Tap already installed on this item — update pan value in-place.
+        // Float writes are atomic on ARM64; safe to update from the main thread.
+        _panTapContext->pan = _pan;
+    } else {
+        // No tap yet (or item changed) — install it now.
         [self applyAudioMixToItem:_player.currentItem];
     }
 }
@@ -1158,6 +1175,12 @@ static void panTapProcess(MTAudioProcessingTapRef tap,
         return;
     }
 
+    // Allocate the tap context once; reuse on subsequent calls.
+    if (!_panTapContext) {
+        _panTapContext = (PanTapContext *)malloc(sizeof(PanTapContext));
+    }
+    _panTapContext->pan = _pan;
+
     NSMutableArray<AVMutableAudioMixInputParameters *> *params = [NSMutableArray array];
 
     for (AVPlayerItemTrack *track in item.tracks) {
@@ -1165,12 +1188,9 @@ static void panTapProcess(MTAudioProcessingTapRef tap,
         if (assetTrack == nil) continue;
         if (![assetTrack.mediaType isEqualToString:AVMediaTypeAudio]) continue;
 
-        PanTapContext *clientInfo = (PanTapContext *)malloc(sizeof(PanTapContext));
-        clientInfo->pan = _pan;
-
         MTAudioProcessingTapCallbacks callbacks;
         callbacks.version = kMTAudioProcessingTapCallbacksVersion_0;
-        callbacks.clientInfo = clientInfo;
+        callbacks.clientInfo = _panTapContext;  // AudioPlayer-owned; not freed in finalize
         callbacks.init = panTapInit;
         callbacks.finalize = panTapFinalize;
         callbacks.prepare = NULL;
@@ -1180,10 +1200,7 @@ static void panTapProcess(MTAudioProcessingTapRef tap,
         MTAudioProcessingTapRef tap;
         OSStatus status = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks,
                                                       kMTAudioProcessingTapCreationFlag_PostEffects, &tap);
-        if (status != noErr) {
-            free(clientInfo);
-            continue;
-        }
+        if (status != noErr) continue;
 
         AVMutableAudioMixInputParameters *inputParams =
             [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:assetTrack];
@@ -1492,6 +1509,10 @@ static void panTapProcess(MTAudioProcessingTapRef tap,
             [_player removeObserver:self forKeyPath:@"timeControlStatus"];
         }
         _player = nil;
+    }
+    if (_panTapContext) {
+        free(_panTapContext);
+        _panTapContext = NULL;
     }
     // Untested:
     [_eventChannel dispose];

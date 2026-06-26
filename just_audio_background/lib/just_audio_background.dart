@@ -232,6 +232,12 @@ class _JustAudioPlayer extends AudioPlayerPlatform {
   }
 
   @override
+  Future<SetPanResponse> setPan(SetPanRequest request) async {
+    await _playerAudioHandler.customSetPan(request);
+    return SetPanResponse();
+  }
+
+  @override
   Future<SetSkipSilenceResponse> setSkipSilence(
       SetSkipSilenceRequest request) async {
     await _playerAudioHandler.customSetSkipSilence(request);
@@ -460,6 +466,9 @@ class _PlayerAudioHandler extends BaseAudioHandler
 
   Future<SetPitchResponse> customSetPitch(SetPitchRequest request) async =>
       await (await _player).setPitch(request);
+
+  Future<SetPanResponse> customSetPan(SetPanRequest request) async =>
+      await (await _player).setPan(request);
 
   Future<SetSkipSilenceResponse> customSetSkipSilence(
           SetSkipSilenceRequest request) async =>

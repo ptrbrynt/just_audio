@@ -786,6 +786,8 @@ class _PlayerAudioHandler extends BaseAudioHandler
         MediaAction.seek,
         MediaAction.seekForward,
         MediaAction.seekBackward,
+        MediaAction.setRepeatMode,
+        MediaAction.setShuffleMode,
       },
       androidCompactActionIndices: List.generate(controls.length, (i) => i)
           .where((i) => controls[i].action != MediaAction.stop)
